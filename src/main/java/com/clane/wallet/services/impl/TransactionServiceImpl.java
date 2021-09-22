@@ -14,6 +14,7 @@ import com.clane.wallet.repositories.WalletRepository;
 import com.clane.wallet.responses.Response;
 import com.clane.wallet.responses.TopUpResponse;
 import com.clane.wallet.services.TransactionService;
+import com.clane.wallet.utils.EmailSender;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,6 +33,7 @@ public class TransactionServiceImpl implements TransactionService {
     private final UserRepository userRepository;
     private final WalletRepository walletRepository;
     private final TransactionRepository transactionRepository;
+    private final EmailSender emailSender;
 
     @Override
     @Transactional
@@ -112,12 +113,18 @@ public class TransactionServiceImpl implements TransactionService {
         debitBalance = bigDecimalAmount.setScale(2, RoundingMode.HALF_EVEN).doubleValue();
         Double debitStaringBalance = debitWallet.getBalance();
         debitWallet.setBalance(debitBalance);
-
+        String creditMessage = "Hi, " + debitWallet.getUser().getFirstName() + "\n" +
+                "Your wallet has been credited with an amount of " + dto.getAmount() + "\n" +
+                "Your balance is " + debitBalance;
         Double creditBalance = destinationWallet.getBalance() + dto.getAmount();
         bigDecimalAmount = BigDecimal.valueOf(creditBalance);
         creditBalance = bigDecimalAmount.setScale(2, RoundingMode.HALF_EVEN).doubleValue();
         Double creditStaringBalance = destinationWallet.getBalance();
         destinationWallet.setBalance(creditBalance);
+
+        String debitMessage = "Hi, " + destinationWallet.getUser().getFirstName() + "\n" +
+                "Your wallet has been credited with an amount of " + dto.getAmount() + "\n" +
+                "Your balance is " + creditBalance;
 
         List<Wallet> walletList = new ArrayList<>();
         walletList.add(debitWallet);
@@ -133,7 +140,14 @@ public class TransactionServiceImpl implements TransactionService {
         List<Transaction> transactionList = new ArrayList<>();
         transactionList.add(debitTransaction);
         transactionList.add(creditTransaction);
-        return transactionRepository.saveAll(transactionList);
+        transactionList = transactionRepository.saveAll(transactionList);
+        new Thread(() -> {
+            emailSender.sendEmail(debitWallet.getUser().getEmailAddress(), "DEBIT "+
+                    debitWallet.getWalletAccountNumber(), debitMessage);
+            emailSender.sendEmail(destinationWallet.getUser().getEmailAddress(), "CREDIT "+
+                    destinationWallet.getWalletAccountNumber(), creditMessage);
+        }).start();
+        return transactionList;
     }
 
     private Transaction buildTransactionRequest(TransferDto dto, TransactionType transactionType, String crDr,
